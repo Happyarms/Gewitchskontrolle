@@ -1,0 +1,198 @@
+/////////////////////////////////////////////////////////////////
+
+#include "Button2.h"; //  https://github.com/LennartHennigs/Button2
+#include "ESPRotary.h";
+#include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
+#include <ESP8266HTTPClient.h>
+#include <LiquidCrystal_I2C.h>
+#include <MySQL_Connection.h>
+#include <MySQL_Cursor.h>
+
+/////////////////////////////////////////////////////////////////
+
+#define ROTARY_PIN1  D3
+#define ROTARY_PIN2 D4
+#define BUTTON_PIN  D5
+
+#define CLICKS_PER_STEP   4   // this number depends on your rotary encoder 
+
+
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+
+/////////////////////////////////////////////////////////////////
+
+ESPRotary r = ESPRotary(ROTARY_PIN1, ROTARY_PIN2, CLICKS_PER_STEP);
+Button2 b = Button2(BUTTON_PIN);
+
+#ifndef STASSID
+#define STASSID "SSID"
+#define STAPSK  "Password"
+#endif
+
+const char* ssid = STASSID;
+const char* password = STAPSK;
+
+IPAddress server_addr(1,1,1,1);  // IP of the MySQL *server* here
+char user[] = "DBUSER";              // MySQL user login username
+char MySQLpassword[] = "DBPASS";        // MySQL user login password
+char default_db[] = "gewichtskontrolle";
+
+// Sample query
+char query[] = "SELECT gewicht FROM gewichtskontrolle ORDER BY datum desc LIMIT 1";
+float head_count;
+
+//Your Domain name with URL path or IP address with path
+const char* PostserverName = "http://gewicht.dennisgloger.de/index.php";
+String httpRequestData = "gewicht=";
+      
+WiFiClient client;            // Use this for WiFi instead of EthernetClient
+MySQL_Connection conn((Client *)&client);
+// Create an instance of the cursor passing in the connection
+MySQL_Cursor cur = MySQL_Cursor(&conn);
+
+/////////////////////////////////////////////////////////////////
+
+void setup() {
+  Serial.begin(115200);
+  delay(50);
+  lcd.begin();
+
+  // Turn on the blacklight and print a message.
+  lcd.backlight();
+  lcd.print("Booting");
+  
+  r.setChangedHandler(rotate);
+  r.setLeftRotationHandler(showDirection);
+  r.setRightRotationHandler(showDirection);
+
+  b.setTapHandler(click);
+//  b.setLongClickHandler(resetPosition);
+
+  Serial.print("connecting to ");
+  Serial.println(ssid);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  lcd.setCursor(0,1);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    lcd.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+
+  Serial.println("Connecting to MySQL...");
+  if (conn.connect(server_addr, 3306, user, MySQLpassword, default_db)) {
+    delay(1000);
+    row_values *row = NULL;
+
+  delay(1000);
+
+  //2) Demonstrating using a local, global cursor.
+  // Execute the query
+  cur.execute(query);
+  // Fetch the columns (required) but we don't use them.
+  cur.get_columns();
+  // Read the row (we are only expecting the one)
+  do {
+    row = cur.get_next_row();
+    if (row != NULL) {
+      head_count = atof(row->values[0]);
+    }
+  } while (row != NULL);
+  // Now we close the cursor to free any memory
+  cur.close();
+
+  // Show the result but this time do some math on it
+  Serial.println(head_count);
+
+  delay(500);
+  }
+  else
+    Serial.println("Connection failed.");
+  
+  
+
+
+
+  Serial.println("closing connection");
+  
+    lcd.setCursor(0,0);
+    lcd.print("Gewicht");
+    lcd.setCursor(0,1);
+    lcd.println(head_count);
+}
+
+void loop() {
+  r.loop();
+  b.loop();
+}
+
+/////////////////////////////////////////////////////////////////
+
+// on change
+void rotate(ESPRotary& r) {
+   Serial.println(r.getPosition());
+}
+
+// on left or right rotation
+void showDirection(ESPRotary& r) {
+  Serial.println(r.directionToString(r.getDirection()));
+  if(r.directionToString(r.getDirection()) == "RIGHT"){
+    head_count = head_count-0.1;
+  }else{
+    head_count = head_count+0.1;
+  }
+    lcd.setCursor(0,1);
+    lcd.println(head_count);
+}
+ 
+// single click
+void click(Button2& btn) {
+  Serial.println("Click!");
+  Serial.println(head_count);
+     // Your Domain name with URL path or IP address with path
+     HTTPClient http;
+      http.begin(PostserverName);
+
+      // Specify content-type header
+      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+      
+      // Data to send with HTTP POST
+      httpRequestData = "gewicht="+String(head_count);
+      
+      // Send HTTP POST request
+      int httpResponseCode = http.POST(httpRequestData);
+      
+      // If you need an HTTP request with a content type: text/plain
+      //http.addHeader("Content-Type", "text/plain");
+      //int httpResponseCode = http.POST("Hello, World!");
+     
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+      
+      lcd.setCursor(1,1);
+      lcd.println("Upload");
+
+      delay(500);
+      
+      lcd.setCursor(0,1);
+      lcd.println(head_count);
+    
+        
+      // Free resources
+      http.end();
+}
+
+// long click
+//void resetPosition(Button2& btn) {
+//  r.resetPosition();
+//  Serial.println("Reset!");
+//}
+
+/////////////////////////////////////////////////////////////////
